@@ -1,0 +1,30 @@
+{
+  "name": "client",
+  "version": "1.0.0",
+  "description": "a client that handles auth and game server connection for hatchapp",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/hatchapp/client.git"
+  },
+  "keywords": [
+    "client",
+    "hatchapp",
+    "socket.io-client",
+    "game"
+  ],
+  "author": "Yengas",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/hatchapp/client/issues"
+  },
+  "homepage": "https://github.com/hatchapp/client#readme",
+  "dependencies": {
+    "request": "^2.88.0",
+    "request-promise-native": "^1.0.5",
+    "url-join": "^4.0.0"
+  }
+}
