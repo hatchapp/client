@@ -64,12 +64,20 @@ module.exports = function({ base_url }){
 	 * however make sure you don't call more than one of the methods of this client at the same time
 	 * because that may cause the token to go out of sync with the authenticatedClient it self.
 	 * @param token
-	 * @returns {{register: *, refresh: *, change: *, getToken: (function(): *)}}
+	 * @param tokenChange
+	 * @returns {{register: *, refresh: *, change: *}}
 	 */
-	function createAuthenticatedClient(token){
+	function createAuthenticatedClient(token, tokenChange){
 		function handleTokenChange(body){
-			if(body && body.token)
-				token = body.token;
+			if(body && body.token) token = body.token;
+			if(typeof tokenChange === 'function') {
+				try {
+					tokenChange(token);
+				} catch(err) {
+					// pass
+				}
+			}
+
 			return body;
 		}
 
@@ -81,7 +89,6 @@ module.exports = function({ base_url }){
 			register: wrapFunction(register),
 			refresh: wrapFunction(refresh),
 			change: wrapFunction(change),
-			getToken: () => token,
 		};
 	}
 
