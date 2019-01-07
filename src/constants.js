@@ -17,5 +17,6 @@ module.exports = {
 		CHOOSE_CATEGORY: 'choose_category',
 	},
 	DEFAULT_TOKEN_REFRESH: ((3 * 60 * 60) - (5 * 60)) * 1000,
+	DEFAULT_TOKEN_REFRESH_RETRY: 3000,
 	DEFAULT_RECONNECT_DELAY: 1000,
 };

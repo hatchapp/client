@@ -1,58 +1,110 @@
-const { from, interval, BehaviorSubject, } = require('rxjs');
-const { map, mergeMap, shareReplay, switchMap, withLatestFrom } = require('rxjs/operators');
+const { from, merge, interval, BehaviorSubject } = require('rxjs');
+const { map, delay, first, takeUntil, publishReplay, refCount, retryWhen, startWith, skip, mergeMap, switchMap } = require('rxjs/operators');
 
 const backendCreator = require('./backend');
 const Constants = require('./constants');
 
-module.exports = function({ backend: backendConfig, refreshInterval = Constants.DEFAULT_TOKEN_REFRESH }){
+/**
+ * creates an authenticated client, that keeps of the latest token according to the calls made
+ * however make sure you don't call more than one of the methods of this client at the same time
+ * because that may cause the token to go out of sync with the authenticatedClient it self.
+ * @param backend
+ * @param initialToken
+ * @returns {{tokenChange$: Observable<string>, client: {register: *, refresh: *, change: *}}}
+ */
+function createAuthenticatedClient(backend, initialToken){
+	const tokenChange$ = new BehaviorSubject(initialToken);
+
+	function handleTokenChange(body){
+		if(body && body.token) tokenChange$.next(body.token);
+
+		return body;
+	}
+
+	function wrapFunction(func){
+		return (...args) => func(tokenChange$.getValue(), ...args).then(handleTokenChange);
+	}
+
+	const client = {
+		register: wrapFunction(backend.register),
+		refresh: wrapFunction(backend.refresh),
+		change: wrapFunction(backend.change),
+	};
+
+	return { tokenChange$: tokenChange$.pipe(skip(1), publishReplay(1), refCount()), client };
+}
+
+function getTokenFromResponse(resp) {
+	if (!resp.token) throw new Error('no token in response');
+	return resp.token;
+}
+
+function createRefreshedTokenStream(backend, initialToken, refreshInterval, refreshRetry) {
+	const refreshToken = async (token) => getTokenFromResponse(await backend.refresh(token));
+
+	return interval(refreshInterval).pipe(
+		first(),
+		// for each interval, send a request to the backend for token refresh
+		mergeMap(() => from(refreshToken(initialToken))),
+		// retry if there is an error when getting the token
+		retryWhen(errors => errors.pipe(delay(refreshRetry))),
+	);
+}
+
+module.exports = function({
+	backend: backendConfig,
+	refresh: { interval = Constants.DEFAULT_TOKEN_REFRESH, retry = Constants.DEFAULT_TOKEN_REFRESH_RETRY  } = {}
+}){
 	const backend = backendCreator(backendConfig);
 
-	async function createWithLogin(name, password){
-		const { token } = await backend.login(name, password);
+	const createWithLogin = (name, password) => (
+		from(backend.login(name, password)).pipe(
+			mergeMap(({ token }) => createGameServerClientStream(token)),
+			publishReplay(1),
+			refCount()
+		)
+	);
 
-		return createGameServerClientStream(token);
-	}
+	const createWithToken = token => (
+		from(backend.refresh(token)).pipe(
+			mergeMap(({ token: newToken }) => createGameServerClientStream(newToken)),
+			publishReplay(1),
+			refCount()
+		)
+	);
 
-	async function createWithToken(token){
-		const { token: newToken } = await backend.refresh(token);
-
-		return createGameServerClientStream(newToken);
-	}
-
-	async function createAnonymous(){
-		const { token } = await backend.init();
-
-		return createGameServerClientStream(token);
-	}
+	const createAnonymous = () => (
+		from(backend.init()).pipe(
+			mergeMap(({ token }) => createGameServerClientStream(token)),
+			publishReplay(1),
+			refCount()
+		)
+	);
 
 	function createGameServerClientStream(token){
-		const token$ = new BehaviorSubject(token);
-
-		// for each new token
-		const client$ = token$.pipe(
-			// create an authenticated client, that uses the new token
-			map(newToken => backend.createAuthenticatedClient(newToken, (changedToken) => token$.next(changedToken))),
-			// only one client needs to be active at the same time
-			shareReplay(1)
+		const { tokenChange$, client } = createAuthenticatedClient(backend, token);
+		// each time a new token is emitted, start the refresh process for it
+		const refreshedToken$ = tokenChange$.pipe(
+			startWith(token),
+			switchMap(newToken => createRefreshedTokenStream(backend, newToken, interval, retry)),
+			publishReplay(1),
+			refCount()
 		);
 
-		const tokenRefreshSubscribe = token$.pipe(
-			switchMap(() => interval(refreshInterval)),
-			withLatestFrom(client$),
-			// for each interval, send a request to the backend for token refresh
-			mergeMap(([_, client]) => from(client.refresh().catch(() => null)))
-		).subscribe(() => null);
+		// if the token is changed on the client side, we can just emit the new token and the old client
+		const result$ = tokenChange$.pipe(
+			map(newToken => [newToken, client]),
+			takeUntil(refreshedToken$),
+			startWith([token, client])
+		);
 
-		async function stop(){
-			token$.complete();
-			tokenRefreshSubscribe.unsubscribe();
-		}
+		// if we got a refreshed token, create a new client stream with the refreshed token
+		const refreshedResult$ = refreshedToken$.pipe(
+			first(),
+			switchMap((refreshedToken) => createGameServerClientStream(refreshedToken))
+		);
 
-		return {
-			client$,
-			token$,
-			stop,
-		};
+		return merge(result$, refreshedResult$).pipe(publishReplay(1), refCount());
 	}
 
 	return {
