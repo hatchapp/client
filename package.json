@@ -2,7 +2,7 @@
   "name": "@hatchapp/client",
   "version": "1.0.0",
   "description": "a client that handles auth and game server connection for hatchapp",
-  "main": "index.js",
+  "main": "src/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
