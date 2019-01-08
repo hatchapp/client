@@ -29,6 +29,7 @@ function createAuthenticatedClient(backend, initialToken){
 		register: wrapFunction(backend.register),
 		refresh: wrapFunction(backend.refresh),
 		change: wrapFunction(backend.change),
+		login: (name, password) => backend.login(name, password).then(handleTokenChange),
 	};
 
 	return { tokenChange$: tokenChange$.pipe(skip(1), publishReplay(1), refCount()), client };
