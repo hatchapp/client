@@ -1,5 +1,5 @@
 const { from, merge, interval, BehaviorSubject } = require('rxjs');
-const { map, delay, first, takeUntil, publishReplay, refCount, retryWhen, startWith, skip, mergeMap, switchMap } = require('rxjs/operators');
+const { map, delay, first, takeUntil, publishReplay, refCount, retryWhen, startWith, skip, switchMap } = require('rxjs/operators');
 
 const backendCreator = require('./backend');
 const Constants = require('./constants');
@@ -45,7 +45,7 @@ function createRefreshedTokenStream(backend, initialToken, refreshInterval, refr
 	return interval(refreshInterval).pipe(
 		first(),
 		// for each interval, send a request to the backend for token refresh
-		mergeMap(() => from(refreshToken(initialToken))),
+		switchMap(() => from(refreshToken(initialToken))),
 		// retry if there is an error when getting the token
 		retryWhen(errors => errors.pipe(delay(refreshRetry))),
 	);
@@ -57,29 +57,31 @@ module.exports = function({
 }){
 	const backend = backendCreator(backendConfig);
 
-	const createWithLogin = (name, password) => (
-		from(backend.login(name, password)).pipe(
-			mergeMap(({ token }) => createGameServerClientStream(token)),
-			publishReplay(1),
-			refCount()
-		)
-	);
+	const createWithLogin = (name, password) => createSeparatedAndSharedGameServerClientStream(() => backend.login(name, password));
+	const createWithToken = token => createSeparatedAndSharedGameServerClientStream(() => backend.refresh(token));
+	const createAnonymous = () => createSeparatedAndSharedGameServerClientStream(() => backend.init());
 
-	const createWithToken = token => (
-		from(backend.refresh(token)).pipe(
-			mergeMap(({ token: newToken }) => createGameServerClientStream(newToken)),
+	function createSeparatedAndSharedGameServerClientStream(tokenGenerator) {
+		const tokenAndClient$ = from((async () => tokenGenerator())()).pipe(
+			switchMap(({ token }) => createGameServerClientStream(token)),
 			publishReplay(1),
 			refCount()
-		)
-	);
+		);
 
-	const createAnonymous = () => (
-		from(backend.init()).pipe(
-			mergeMap(({ token }) => createGameServerClientStream(token)),
+		const token$ = tokenAndClient$.pipe(
+			map(([token]) => token),
 			publishReplay(1),
 			refCount()
-		)
-	);
+		);
+
+		const client$ = tokenAndClient$.pipe(
+			map(([_, client]) => client),
+			publishReplay(1),
+			refCount()
+		);
+
+		return { token$, client$ };
+	}
 
 	function createGameServerClientStream(token){
 		const { tokenChange$, client } = createAuthenticatedClient(backend, token);

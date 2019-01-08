@@ -1,5 +1,5 @@
-const { of, merge, throwError, BehaviorSubject, NEVER } = require('rxjs');
-const { first, delay, map, mergeMap, retryWhen, shareReplay, withLatestFrom } = require('rxjs/operators');
+const { combineLatest, of, merge, throwError, Observable, NEVER } = require('rxjs');
+const { delay, first, refCount, retryWhen, publishReplay, switchMap } = require('rxjs/operators');
 const socketio = require('socket.io-client');
 
 const { DEFAULT_RECONNECT_DELAY } = require('./constants');
@@ -23,34 +23,29 @@ function createSocketDisconnectStream(socket){
 module.exports = ({ url: socketURL, reconnectDelay = DEFAULT_RECONNECT_DELAY } = {}) => {
 	//
 	function createSocket(token$, roomId){
-		const alive$ = new BehaviorSubject(null);
 		// each time the socket disconnects,
-		const socket$ = alive$.pipe(
+		return of(null).pipe(
 			// create a socket connection, and listen to its disconnect
-			mergeMap(() => of(null).pipe(withLatestFrom(token$), mergeMap(([_, token]) => {
+			switchMap(() => combineLatest(token$).pipe(first(), switchMap(([token]) => {
 				const socket = createSocketWithToken(socketURL, token, roomId);
 				const disconnect$ = createSocketDisconnectStream(socket);
+				const socket$ = new Observable(s$ => {
+					s$.next(socket);
+
+					return function() { socket.close(true); };
+				});
 
 				return merge(
-					of(socket),
-					disconnect$.pipe(mergeMap((_) => throwError(new Error('disconnected from the socket'))))
+					socket$,
+					disconnect$.pipe(switchMap((_) => throwError(new Error('disconnected from the socket'))))
 				);
 			}))),
 			// retry with some delay
 			retryWhen(errors => errors.pipe(delay(reconnectDelay))),
 			// only one socket connection should be active at the same time
-			shareReplay(1)
+			publishReplay(1),
+			refCount(),
 		);
-
-		async function stop(){
-			alive$.complete();
-			await socket$.pipe(first()).forEach(socket => socket.close(true));
-		}
-
-		return {
-			socket$,
-			stop,
-		};
 	}
 
 	return {
