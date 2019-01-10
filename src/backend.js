@@ -1,39 +1,30 @@
 const join = require('url-join');
-const request = require('request-promise-native');
+const request = require('superagent');
 
 function getUrl(base, method){
 	return join(base, method);
 }
 
 function createAuthenticationHeaders(token){
-	return {
-		Authorization: `Bearer ${token}`
-	};
+	return { Authorization: `Bearer ${token}` };
 }
 
 function handleResponse(result){
-	const { result: { success }, data } = result;
+	const { result: { success }, data } = result.body;
 	if(success !== true)
-		throw new Error(result);
+		throw new Error(result.body);
 	return data;
 }
 
 module.exports = function({ base_url }){
-	function get(method, headers){
+	function get(method, headers = {}){
 		const url = getUrl(base_url, method);
-		return request({ url, headers, json: true }).then(handleResponse);
+		return request.get(url).set(headers).accept('json').then(handleResponse);
 	}
 
-	function post(method, body, headers){
+	function post(method, body, headers = {}){
 		const url = getUrl(base_url, method);
-		return request({
-			url,
-			body,
-			method: 'POST',
-			json: true,
-			headers:
-				Object.assign({ 'Content-Type': 'application/json' }, headers),
-		}).then(handleResponse);
+		return request.post(url).type('json').accept('json').set(headers).send(body).then(handleResponse);
 	}
 
 	function init(){
